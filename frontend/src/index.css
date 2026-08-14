@@ -654,11 +654,16 @@ button {
   pointer-events: none;
 }
 
-.view-toggle {
+.whiteboard-toolbar {
   position: absolute;
   top: 16px;
   left: 16px;
   z-index: 5;
+  display: flex;
+  gap: 8px;
+}
+
+.view-toggle {
   display: inline-flex;
   background: var(--panel-bg);
   border: 1px solid var(--border-strong);

@@ -65,6 +65,8 @@ export default function Whiteboard({
   defaultPositions,
   viewMode,
   setViewMode,
+  lineageDirection,
+  setLineageDirection,
   selectedTables,
   selectedFields,
   onClear,
@@ -168,15 +170,33 @@ export default function Whiteboard({
     setInspect({ tableId, field, kind: describeTransform(tableId, field) });
   };
 
-  const visibleEdges = edges.filter((edge) => nodeIds.includes(edge.from) && nodeIds.includes(edge.to));
+  const visibleEdges = edges.filter(
+    (edge) => nodeIds.includes(edge.from) && nodeIds.includes(edge.to) && positions[edge.from] && positions[edge.to]
+  );
 
   return (
     <section className="whiteboard" ref={containerRef} onMouseDown={handlePanStart}>
       <div className="whiteboard-grid" />
 
-      <div className="view-toggle">
-        <button className={viewMode === 'table' ? 'active' : ''} onClick={() => setViewMode('table')}>TABLE</button>
-        <button className={viewMode === 'field' ? 'active' : ''} onClick={() => setViewMode('field')}>FIELD</button>
+      <div className="whiteboard-toolbar">
+        <div className="view-toggle">
+          <button className={viewMode === 'table' ? 'active' : ''} onClick={() => setViewMode('table')}>TABLE</button>
+          <button className={viewMode === 'field' ? 'active' : ''} onClick={() => setViewMode('field')}>FIELD</button>
+        </div>
+        <div className="view-toggle">
+          <button
+            className={lineageDirection === 'downstream' ? 'active' : ''}
+            onClick={() => setLineageDirection('downstream')}
+          >
+            DOWNSTREAM
+          </button>
+          <button
+            className={lineageDirection === 'upstream' ? 'active' : ''}
+            onClick={() => setLineageDirection('upstream')}
+          >
+            UPSTREAM
+          </button>
+        </div>
       </div>
 
       <div className="whiteboard-canvas" style={{ transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})` }}>

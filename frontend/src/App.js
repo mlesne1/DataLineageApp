@@ -9,9 +9,7 @@ import { colorForLayer } from './lib/projectTree';
 
 const API_BASE = 'http://127.0.0.1:8000';
 
-// Lineage edges and saved node layouts aren't in the project JSON yet -
-// that lands once Step3-5 are adjusted to the new contract.
-const NO_EDGES = [];
+// Saved node layouts aren't in the project JSON yet.
 const NO_DEFAULT_POSITIONS = {};
 
 function App() {
@@ -22,9 +20,11 @@ function App() {
   const [message, setMessage] = useState('');
 
   const [viewMode, setViewMode] = useState('table');
+  const [lineageDirection, setLineageDirection] = useState('downstream');
   const [selectedTables, setSelectedTables] = useState(new Set());
   const [selectedFields, setSelectedFields] = useState(new Set());
   const [selectedModel, setSelectedModel] = useState(null);
+  const [edges, setEdges] = useState([]);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [warnings] = useState([]);
 
@@ -36,7 +36,7 @@ function App() {
       ...layers,
       {
         key: `semantic-model-${selectedModel.id}`,
-        label: `Semantic Layer — ${selectedModel.name}`,
+        label: 'Semantic Layer',
         color: colorForLayer('Semantic Layer', layers.length),
         groups: [{ type: 'TABLES', items: selectedModel.tables }],
       },
@@ -59,6 +59,7 @@ function App() {
     setSelectedTables(new Set());
     setSelectedFields(new Set());
     setSelectedModel(null);
+    setEdges([]);
   };
 
   const loadProjectData = async (projectName) => {
@@ -74,29 +75,84 @@ function App() {
     }
   };
 
+  const mergeEdges = (prev, incoming) => {
+    const seen = new Set(prev.map((e) => `${e.from}::${e.to}`));
+    const merged = [...prev];
+    incoming.forEach((edge) => {
+      const key = `${edge.from}::${edge.to}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        merged.push(edge);
+      }
+    });
+    return merged;
+  };
+
+  const applyLineage = (data) => {
+    if (data.tables && data.tables.length) {
+      setSelectedTables((prev) => {
+        const next = new Set(prev);
+        data.tables.forEach((id) => next.add(id));
+        return next;
+      });
+    }
+
+    if (data.edges && data.edges.length) {
+      setEdges((prev) => mergeEdges(prev, data.edges));
+    }
+
+    if (data.fields && data.fields.length) {
+      setSelectedFields((prev) => {
+        const next = new Set(prev);
+        data.fields.forEach((f) => next.add(`${f.table_id}::${f.column}`));
+        return next;
+      });
+    }
+  };
+
+  const fetchLineage = async (tableId, column) => {
+    if (!createdProject) return;
+    try {
+      const params = new URLSearchParams({ direction: lineageDirection });
+      if (column) params.set('column', column);
+      const response = await fetch(
+        `${API_BASE}/projects/${encodeURIComponent(createdProject)}/lineage/${encodeURIComponent(tableId)}?${params}`
+      );
+      if (!response.ok) return;
+      applyLineage(await response.json());
+    } catch (err) {
+      // backend not reachable - the click still registers, just without the drilldown
+    }
+  };
+
   const handleToggleTable = (tableId) => {
+    const isSelecting = !selectedTables.has(tableId);
     setSelectedTables((prev) => {
       const next = new Set(prev);
       if (next.has(tableId)) next.delete(tableId);
       else next.add(tableId);
       return next;
     });
+    if (isSelecting) fetchLineage(tableId);
   };
 
-  const handleToggleField = (tableId, fieldName) => {
+  const handleToggleField = (tableId, fieldName, sourceColumn) => {
     setViewMode('field');
+    const key = `${tableId}::${fieldName}`;
+    const isSelecting = !selectedFields.has(key);
     setSelectedFields((prev) => {
       const next = new Set(prev);
-      const key = `${tableId}::${fieldName}`;
       if (next.has(key)) next.delete(key);
       else next.add(key);
       return next;
     });
+    if (isSelecting) fetchLineage(tableId, sourceColumn || fieldName);
   };
 
   const handleClearWhiteboard = () => {
     setSelectedTables(new Set());
     setSelectedFields(new Set());
+    setEdges([]);
   };
 
   const handleCreateProject = async (name, xmlFile) => {
@@ -176,10 +232,12 @@ function App() {
 
         <Whiteboard
           layers={displayLayers}
-          edges={NO_EDGES}
+          edges={edges}
           defaultPositions={NO_DEFAULT_POSITIONS}
           viewMode={viewMode}
           setViewMode={setViewMode}
+          lineageDirection={lineageDirection}
+          setLineageDirection={setLineageDirection}
           selectedTables={selectedTables}
           selectedFields={selectedFields}
           onClear={handleClearWhiteboard}

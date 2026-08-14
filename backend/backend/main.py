@@ -6,6 +6,7 @@ import json
 import shutil
 import xml.etree.ElementTree as ET
 
+from .downstream_lineage import get_lineage
 from .sql_generate_schema import generate_schema
 from .table_lineage import compute_table_lineage
 from .view_lineage import compute_view_lineage
@@ -83,6 +84,22 @@ async def get_project_data(project_name: str):
         )
 
     return json.loads(json_path.read_text(encoding="utf-8"))
+
+
+@app.get("/projects/{project_name}/lineage/{table_id}")
+async def get_table_lineage(project_name: str, table_id: str, direction: str = "downstream", column: str | None = None):
+    if direction not in ("downstream", "upstream"):
+        return JSONResponse(status_code=400, content={"error": "direction must be 'downstream' or 'upstream'"})
+
+    json_path = PROJECTS_DIR / project_name / "project.json"
+    if not json_path.exists():
+        return JSONResponse(
+            status_code=404,
+            content={"error": "No analysis data for this project yet"},
+        )
+
+    structure = json.loads(json_path.read_text(encoding="utf-8"))
+    return get_lineage(structure, table_id, direction, column)
 
 
 def run():

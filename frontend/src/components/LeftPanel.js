@@ -34,7 +34,7 @@ function FieldSubRows({ item, color, selectedFields, onToggleField }) {
         const key = `${item.id}::${field.name}`;
         const checked = selectedFields.has(key);
         return (
-          <button key={key} className="tree-row field-row" onClick={() => onToggleField(item.id, field.name)}>
+          <button key={key} className="tree-row field-row" onClick={() => onToggleField(item.id, field.name, field.source)}>
             <Checkbox checked={checked} />
             <span className="tree-row-name" style={{ color }}>
               {field.name}
