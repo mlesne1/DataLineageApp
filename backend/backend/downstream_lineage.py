@@ -22,10 +22,27 @@ nothing records "what consumes me" directly.
 This only reads from `structure`; it doesn't mutate it and isn't run as
 part of project creation - call it on demand when a table/field is clicked.
 
-Known gap: ColumnLineage `sources` entries are plain table/column NAMES
-(e.g. "stg_orders.order_id"), not the DataTableId/DataFieldId values the
-frontend uses to identify whiteboard nodes - matching a name back to an ID
-needs a small lookup the frontend or an API layer would still have to do.
+Resolving a source name to a table, precisely
+-----------------------------------------------
+The same table name is routinely reused across warehouses in a TimeXtender
+project (a staging table and its MDW counterpart, say), so a bare name isn't
+enough to know which table a reference means. Sources produced by
+view_lineage.py (sql_col_lineage.py parsing a view's SQL) are schema-
+qualified almost always - sql_col_lineage.py's table_name() preserves the
+schema/catalog from the SQL, and even a schema-less `FROM x` gets the
+referencing view's own schema attached as a fallback (see
+sql_col_lineage.Lineage.resolve_select). That schema segment is exactly what
+disambiguates a same-named table in a different warehouse, so this file
+resolves against it whenever it's present, via a (schema, table) ->
+DataTableId map built the same way sql_generate_schema.py builds its
+qualify_schema (SchemaName, falling back to the warehouse name).
+
+Known gap: sources produced by table_lineage.py's non-script categories
+(table insert mappings, related records, lookup fields) are built straight
+from resolved table/field NAMES with no schema attached, so those stay
+ambiguous when the name collides - resolved only if the bare name happens
+to be globally unique, left unresolved (shown as a dead end, not guessed)
+otherwise.
 """
 
 from __future__ import annotations
@@ -35,122 +52,172 @@ def _normalize(value: str) -> str:
     return value.strip().lower()
 
 
-def _table_column_key(path: str) -> str | None:
-    """Reduce a lineage source path to its last two "table.column" segments.
+def _parse_source_ref(path: str) -> tuple[str | None, str, str] | None:
+    """Split a lineage source path into (schema_or_None, table, column).
 
-    ColumnLineage sources are inconsistently 2-part ("table.column") or
-    3-part ("warehouse.table.column") depending on which lineage category
-    produced them (same-table references know their own warehouse prefix;
-    cross-table references only have the resolved table name) - true in
-    the old pipeline too, not something introduced here. Keying off the
-    last two segments sidesteps that instead of trying to normalize it away.
+    2-part ("table.column") means no schema was available - see the module
+    docstring. 3+ parts means the last three are (schema, table, column);
+    a leading catalog segment (sql_col_lineage.table_name() includes one
+    when present) is dropped, since nothing here tracks catalogs.
     """
     parts = [p for p in path.split(".") if p]
     if len(parts) < 2:
         return None
-    return _normalize(f"{parts[-2]}.{parts[-1]}")
+    if len(parts) == 2:
+        return None, parts[0], parts[1]
+    return parts[-3], parts[-2], parts[-1]
 
 
 def _iter_entities(structure: dict):
-    """Yield (table_path, entity_name, entity_dict) for every table and view
-    across every project/warehouse."""
+    """Yield (table_path, entity_name, entity_dict, warehouse_name) for
+    every table and view across every project/warehouse."""
     for project in structure.get("Projects", {}).values():
         for warehouse_name, warehouse in project.get("DataWarehouses", {}).items():
             for kind in ("Tables", "Views"):
                 for entity_name, entity in warehouse.get(kind, {}).items():
-                    yield f"{warehouse_name}.{entity_name}", entity_name, entity
+                    yield f"{warehouse_name}.{entity_name}", entity_name, entity, warehouse_name
 
 
-def build_downstream_index(structure: dict) -> dict[str, list[dict]]:
-    """Maps a normalized "table.column" source key to every field that
-    consumes it, by scanning every entity's ColumnLineage (populated by
-    view_lineage.compute_view_lineage / table_lineage.compute_table_lineage).
+def _table_registry(structure: dict) -> tuple[dict[tuple[str, str], str], dict[str, str], dict[str, str]]:
+    """Three maps built from every table/view in the project:
+      - (normalized schema, normalized name) -> DataTableId: resolves a
+        schema-qualified reference exactly, even when the bare name is
+        reused elsewhere.
+      - normalized name -> DataTableId, only for names that are globally
+        unique - the best that can be done for a reference with no schema.
+      - DataTableId -> name, for turning a resolved id back into the name
+        the rest of this file matches sources against.
+
+    Schema is `entity.get("SchemaName") or warehouse_name` - the exact
+    fallback sql_generate_schema.generate_schema() uses to build the
+    qualify_schema sql_col_lineage.py qualifies every table reference
+    against, so this lines up with the schema segment of a 3-part source.
     """
-    index: dict[str, list[dict]] = {}
+    schema_table_to_id: dict[tuple[str, str], str] = {}
+    name_to_ids: dict[str, set[str]] = {}
+    id_to_name: dict[str, str] = {}
 
-    for table_path, entity_name, entity in _iter_entities(structure):
+    for _table_path, entity_name, entity, warehouse_name in _iter_entities(structure):
+        table_id = entity.get("DataTableId") or entity_name
+        schema_name = entity.get("SchemaName") or warehouse_name
+        schema_table_to_id[(_normalize(schema_name), _normalize(entity_name))] = table_id
+        name_to_ids.setdefault(_normalize(entity_name), set()).add(table_id)
+        id_to_name[table_id] = entity_name
+
+    name_to_id = {name: next(iter(ids)) for name, ids in name_to_ids.items() if len(ids) == 1}
+    return schema_table_to_id, name_to_id, id_to_name
+
+
+def _resolve_table_id(
+    schema_name: str | None,
+    table_name: str,
+    schema_table_to_id: dict[tuple[str, str], str],
+    name_to_id: dict[str, str],
+) -> str | None:
+    """Resolve a (schema, table) reference to a specific DataTableId.
+
+    A schema-qualified reference resolves exactly - no ambiguity, even when
+    another table elsewhere shares the same bare name. A schema-less
+    reference only resolves if the bare name is unique across the whole
+    project; otherwise there's no way to tell which same-named table it
+    means, so it's left unresolved rather than guessed at.
+    """
+    if schema_name:
+        return schema_table_to_id.get((_normalize(schema_name), _normalize(table_name)))
+    return name_to_id.get(_normalize(table_name))
+
+
+def build_downstream_index(
+    structure: dict,
+    schema_table_to_id: dict[tuple[str, str], str],
+    name_to_id: dict[str, str],
+) -> dict[tuple[str, str], list[dict]]:
+    """Maps a resolved (source_table_id, normalized source_column) to every
+    field that consumes it, by scanning every entity's ColumnLineage
+    (populated by view_lineage.compute_view_lineage /
+    table_lineage.compute_table_lineage).
+
+    A source that can't be resolved to a specific table is skipped here -
+    it just means that particular consumer can't be attributed as feeding
+    off of one of our known tables; get_lineage still shows the clicked
+    table's own node regardless.
+    """
+    index: dict[tuple[str, str], list[dict]] = {}
+
+    for _table_path, entity_name, entity, _warehouse_name in _iter_entities(structure):
+        entity_id = entity.get("DataTableId") or entity_name
         for column, lineage in entity.get("ColumnLineage", {}).items():
             for source in lineage.get("sources", []):
-                key = _table_column_key(source)
-                if not key:
+                parsed = _parse_source_ref(source)
+                if not parsed:
                     continue
-                index.setdefault(key, []).append(
-                    {"table": entity_name, "table_path": table_path, "column": column}
+                source_schema, source_table, source_column = parsed
+                source_id = _resolve_table_id(source_schema, source_table, schema_table_to_id, name_to_id)
+                if not source_id:
+                    continue
+                index.setdefault((source_id, _normalize(source_column)), []).append(
+                    {"table_id": entity_id, "column": column}
                 )
 
     return index
 
 
-def _table_id_and_name_maps(structure: dict) -> tuple[dict[str, str], dict[str, str]]:
-    """(normalized name -> DataTableId, DataTableId -> name) across every
-    table/view, so downstream results can be expressed as the same
-    DataTableId values the frontend already uses for whiteboard nodes.
-
-    A name shared by more than one table (the same table name reused across
-    warehouses - common in TimeXtender projects, e.g. a staging table and
-    its MDW counterpart) is deliberately left out of name_to_id.
-    ColumnLineage only ever records cross-table references by bare name (no
-    warehouse/schema qualifier - see `_table_column_key`), so there's no way
-    to tell which of the same-named tables a given reference actually meant.
-    Guessing one would silently borrow lineage that may belong to a
-    different table; leaving it out instead makes that reference resolve
-    the same way a genuinely external/untracked table already does (`_walk`
-    falls back to the raw name, which never matches a real DataTableId).
-    """
-    name_to_ids: dict[str, set[str]] = {}
-    id_to_name: dict[str, str] = {}
-    for _table_path, entity_name, entity in _iter_entities(structure):
-        table_id = entity.get("DataTableId") or entity_name
-        name_to_ids.setdefault(_normalize(entity_name), set()).add(table_id)
-        id_to_name[table_id] = entity_name
-
-    name_to_id = {name: next(iter(ids)) for name, ids in name_to_ids.items() if len(ids) == 1}
-    return name_to_id, id_to_name
-
-
-def build_upstream_index(structure: dict) -> dict[str, dict]:
-    """Maps a normalized "table.column" key to that field's own lineage dict
+def build_upstream_index(structure: dict) -> dict[tuple[str, str], dict]:
+    """Maps (table_id, normalized column) to that field's own lineage dict
     (with its "sources"), by scanning every entity's ColumnLineage. Unlike
     `build_downstream_index`, this isn't inverted - a field's sources are
     already sitting right there on the field itself, so no separate
     consumer-lookup is needed to walk upstream.
     """
-    index: dict[str, dict] = {}
-    for _table_path, entity_name, entity in _iter_entities(structure):
+    index: dict[tuple[str, str], dict] = {}
+    for _table_path, entity_name, entity, _warehouse_name in _iter_entities(structure):
+        entity_id = entity.get("DataTableId") or entity_name
         for column, lineage in entity.get("ColumnLineage", {}).items():
-            index[_normalize(f"{entity_name}.{column}")] = lineage
+            index[(entity_id, _normalize(column))] = lineage
     return index
 
 
-def _upstream_neighbors(index: dict[str, dict], key: str) -> list[dict]:
-    """The `sources` of the field at `key`, as the same {"table", "column"}
-    shape `build_downstream_index` produces, so upstream and downstream
-    walks can share one BFS in `_walk`."""
+def _upstream_neighbors(
+    index: dict[tuple[str, str], dict],
+    key: tuple[str, str],
+    schema_table_to_id: dict[tuple[str, str], str],
+    name_to_id: dict[str, str],
+) -> list[dict]:
+    """The `sources` of the field at `key`, as {"table_id", "column"}
+    neighbors, so upstream and downstream walks can share one BFS in
+    `_walk`. A source that can't be resolved to a specific table still
+    produces a neighbor - using a pseudo table_id (the raw schema.table or
+    table string) so it shows up as a dead-end connected node rather than
+    silently vanishing (same treatment a genuinely external/untracked table
+    like a raw source table already gets).
+    """
     lineage = index.get(key)
     if not lineage:
         return []
     neighbors = []
     for source in lineage.get("sources", []):
-        source_key = _table_column_key(source)
-        if not source_key:
+        parsed = _parse_source_ref(source)
+        if not parsed:
             continue
-        source_table, _, source_column = source_key.rpartition(".")
-        neighbors.append({"table": source_table, "column": source_column})
+        schema, table, column = parsed
+        table_id = _resolve_table_id(schema, table, schema_table_to_id, name_to_id)
+        if table_id is None:
+            table_id = f"{schema}.{table}" if schema else table
+        neighbors.append({"table_id": table_id, "column": column})
     return neighbors
 
 
 def _walk(
     get_neighbors,
-    name_to_id: dict[str, str],
-    seed_keys: set[str],
-    exclude_table_id: str | None,
+    seed_keys: set[tuple[str, str]],
+    exclude_table_id: str,
     direction: str,
 ) -> dict[str, list]:
-    """Breadth-first walk from `seed_keys`, collapsing the field-level
-    ColumnLineage graph into table-level nodes/edges (plus the raw field
-    list) resolved to DataTableId values. `get_neighbors(key)` returns the
-    next hop's [{"table", "column"}, ...] - consumers for a downstream walk,
-    sources for an upstream one.
+    """Breadth-first walk from `seed_keys` (each a (table_id, normalized
+    column) pair), collapsing the field-level ColumnLineage graph into
+    table-level nodes/edges (plus the raw field list). `get_neighbors(key)`
+    returns the next hop's [{"table_id", "column"}, ...] - consumers for a
+    downstream walk, sources for an upstream one.
 
     Edges are always recorded as {"from": <feeds>, "to": <consumes>} - the
     true data-flow direction - regardless of which direction was walked, so
@@ -162,15 +229,10 @@ def _walk(
     table feeding each other (e.g. a hash field over sibling columns) isn't
     a table edge, but the walk still continues through it.
 
-    A key whose table doesn't resolve to a known, unambiguous DataTableId
-    (genuinely external/untracked, or a name shared by more than one table -
-    see `_table_id_and_name_maps`) is a dead end: it still shows up as a
-    connected node (the edge into/out of it is recorded), but the walk
-    doesn't expand past it. `build_downstream_index`/`build_upstream_index`
-    are themselves keyed by bare name, so blindly querying "its" neighbors
-    could silently return data that actually belongs to a different table
-    sharing that same name - once identity is uncertain, nothing found past
-    that point could be trusted either.
+    A key belonging to an unresolved pseudo table_id is a dead end: both
+    build_downstream_index and build_upstream_index are keyed by *resolved*
+    table_id, so a pseudo id (a raw name string, never a real DataTableId)
+    naturally finds no neighbors, and the walk stops there on its own.
     """
     visited_fields = set(seed_keys)
     queue = list(seed_keys)
@@ -182,20 +244,14 @@ def _walk(
 
     while queue:
         key = queue.pop(0)
-        key_table = key.rsplit(".", 1)[0]
-        resolved_id = name_to_id.get(key_table)
-        key_table_id = resolved_id if resolved_id is not None else key_table
-
-        if resolved_id is None:
-            print(f"[lineage] dead end at {key!r}: {key_table!r} doesn't resolve to a known, unambiguous table", flush=True)
-            continue
+        key_table_id = key[0]
 
         neighbors = get_neighbors(key)
-        print(f"[lineage] {key!r} ({key_table_id}) -> {len(neighbors)} neighbor(s): {neighbors}", flush=True)
+        print(f"[lineage] {key!r} -> {len(neighbors)} neighbor(s): {neighbors}", flush=True)
 
         for neighbor in neighbors:
-            neighbor_table_id = name_to_id.get(_normalize(neighbor["table"]), neighbor["table"])
-            neighbor_key = _normalize(f"{neighbor['table']}.{neighbor['column']}")
+            neighbor_table_id = neighbor["table_id"]
+            neighbor_key = (neighbor_table_id, _normalize(neighbor["column"]))
 
             if neighbor_table_id != key_table_id:
                 edge = (
@@ -232,44 +288,32 @@ def get_lineage(structure: dict, table_id: str, direction: str, column: str | No
     """
     print(f"[lineage] get_lineage(table_id={table_id!r}, direction={direction!r}, column={column!r})", flush=True)
 
-    name_to_id, id_to_name = _table_id_and_name_maps(structure)
+    schema_table_to_id, name_to_id, id_to_name = _table_registry(structure)
     start_name = id_to_name.get(table_id)
     print(f"[lineage] id_to_name[{table_id!r}] = {start_name!r}", flush=True)
     if start_name is None:
         print(f"[lineage] {table_id!r} isn't a known DataTableId - nothing to walk", flush=True)
         return {"tables": [], "edges": [], "fields": []}
 
-    # If another table also has this name, bare "table.column" references
-    # elsewhere can't be trusted to mean *this* table specifically (see
-    # `_table_id_and_name_maps`) - so there's nothing safe to seed from.
-    if name_to_id.get(_normalize(start_name)) != table_id:
-        print(
-            f"[lineage] {start_name!r} is ambiguous (shared with another table) - "
-            f"name_to_id says {name_to_id.get(_normalize(start_name))!r}, refusing to seed",
-            flush=True,
-        )
-        return {"tables": [], "edges": [], "fields": []}
-
     if direction == "downstream":
-        index = build_downstream_index(structure)
+        index = build_downstream_index(structure, schema_table_to_id, name_to_id)
         get_neighbors = lambda key: index.get(key, [])  # noqa: E731
     else:
         index = build_upstream_index(structure)
-        get_neighbors = lambda key: _upstream_neighbors(index, key)  # noqa: E731
+        get_neighbors = lambda key: _upstream_neighbors(index, key, schema_table_to_id, name_to_id)  # noqa: E731
 
     if column:
-        seed_keys = {_normalize(f"{start_name}.{column}")}
+        seed_keys = {(table_id, _normalize(column))}
     else:
-        # Both indexes are keyed the same way (normalized "table.column"),
-        # and in both cases a key only exists for a field that actually has
-        # somewhere to go (a consumer, or a source) - so this seeds exactly
-        # the fields worth walking from, for either direction.
-        start_prefix = _normalize(start_name) + "."
-        seed_keys = {key for key in index if key.startswith(start_prefix)}
+        # Both indexes are keyed by (this table's id, column), and in both
+        # cases a key only exists for a field that actually has somewhere
+        # to go (a consumer, or a source) - so this seeds exactly the
+        # fields worth walking from, for either direction.
+        seed_keys = {key for key in index if key[0] == table_id}
 
     print(f"[lineage] seed_keys = {sorted(seed_keys)}", flush=True)
 
-    result = _walk(get_neighbors, name_to_id, seed_keys, exclude_table_id=table_id, direction=direction)
+    result = _walk(get_neighbors, seed_keys, exclude_table_id=table_id, direction=direction)
     print(
         f"[lineage] result: {len(result['tables'])} table(s), {len(result['edges'])} edge(s), "
         f"{len(result['fields'])} field(s) -> {result}",
