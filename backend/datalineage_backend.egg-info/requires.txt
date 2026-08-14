@@ -1,0 +1,7 @@
+fastapi>=0.110.0
+uvicorn[standard]>=0.23.0
+sqlglot>=17.0.0
+networkx>=3.0
+pyvis>=0.3.2
+openpyxl>=3.1.0
+python-docx>=1.2.0

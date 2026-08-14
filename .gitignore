@@ -1,0 +1,10 @@
+/.claude
+/analyze_pbip_report.py
+/DataLineageApp
+/DataLineageApp.docx
+/sql_generate_schema.py
+/Step3_compute_views_col_lineage.py
+/Step4_compute_tables_col_lineage.py
+/Step5_3_draw_graph_from_excel_failedlineagehandled.py
+/testfile.xml
+/__pycache__

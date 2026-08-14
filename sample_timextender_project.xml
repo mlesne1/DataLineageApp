@@ -1,0 +1,393 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Short mockup TimeXtender project export, hand-written to exercise the
+  create-project -> xml_to_nested_json -> left panel flow end to end.
+  Shape: flat, repeated sibling records per root tag (ProjectId/Name/etc.
+  become the record's fields), matching what xml_to_nested_json.py expects -
+  not a real TX export, just enough of one to test against.
+-->
+<TimeXtenderProject>
+
+  <Projects>
+    <ProjectId>PRJ1</ProjectId>
+    <Name>Sales Analytics Platform</Name>
+  </Projects>
+
+  <!-- Data warehouses (left panel "layers") -->
+  <DataWarehouses>
+    <DataWarehouseId>DW_SEM</DataWarehouseId>
+    <ProjectId>PRJ1</ProjectId>
+    <Name>Semantic Layer</Name>
+  </DataWarehouses>
+  <DataWarehouses>
+    <DataWarehouseId>DW_MDW</DataWarehouseId>
+    <ProjectId>PRJ1</ProjectId>
+    <Name>MDW</Name>
+  </DataWarehouses>
+  <DataWarehouses>
+    <DataWarehouseId>DW_DSA</DataWarehouseId>
+    <ProjectId>PRJ1</ProjectId>
+    <Name>DSA</Name>
+  </DataWarehouses>
+
+  <!-- One connection per warehouse, so its tables can be traced back to it -->
+  <SqlServerConnections>
+    <SqlServerConnectionId>CONN_SEM</SqlServerConnectionId>
+    <DataWarehouseId>DW_SEM</DataWarehouseId>
+    <Name>Semantic Layer Connection</Name>
+  </SqlServerConnections>
+  <SqlServerConnections>
+    <SqlServerConnectionId>CONN_MDW</SqlServerConnectionId>
+    <DataWarehouseId>DW_MDW</DataWarehouseId>
+    <Name>MDW Connection</Name>
+  </SqlServerConnections>
+  <SqlServerConnections>
+    <SqlServerConnectionId>CONN_DSA</SqlServerConnectionId>
+    <DataWarehouseId>DW_DSA</DataWarehouseId>
+    <Name>DSA Connection</Name>
+  </SqlServerConnections>
+
+  <!-- Semantic Layer tables -->
+  <DataTables>
+    <DataTableId>DT_DIM_CUSTOMERS</DataTableId>
+    <Name>dim_customers</Name>
+    <SchemaName>sem</SchemaName>
+    <SqlServerConnectionId>CONN_SEM</SqlServerConnectionId>
+  </DataTables>
+  <DataTables>
+    <DataTableId>DT_FCT_REVENUE</DataTableId>
+    <Name>fct_revenue</Name>
+    <SchemaName>sem</SchemaName>
+    <SqlServerConnectionId>CONN_SEM</SqlServerConnectionId>
+  </DataTables>
+  <DataTables>
+    <DataTableId>DT_DIM_PRODUCTS</DataTableId>
+    <Name>dim_products</Name>
+    <SchemaName>sem</SchemaName>
+    <SqlServerConnectionId>CONN_SEM</SqlServerConnectionId>
+  </DataTables>
+
+  <!-- MDW tables/views -->
+  <DataTables>
+    <DataTableId>DT_INT_RETURNS</DataTableId>
+    <Name>int_returns</Name>
+    <SchemaName>mdw</SchemaName>
+    <SqlServerConnectionId>CONN_MDW</SqlServerConnectionId>
+  </DataTables>
+  <DataTables>
+    <DataTableId>DT_INT_ORDER_REVENUE</DataTableId>
+    <Name>int_order_revenue</Name>
+    <SchemaName>mdw</SchemaName>
+    <SqlServerConnectionId>CONN_MDW</SqlServerConnectionId>
+  </DataTables>
+
+  <!-- DSA tables/views -->
+  <DataTables>
+    <DataTableId>DT_STG_REGIONS</DataTableId>
+    <Name>stg_regions</Name>
+    <SchemaName>dsa</SchemaName>
+    <SqlServerConnectionId>CONN_DSA</SqlServerConnectionId>
+  </DataTables>
+  <DataTables>
+    <DataTableId>DT_STG_ORDERS</DataTableId>
+    <Name>stg_orders</Name>
+    <SchemaName>dsa</SchemaName>
+    <SqlServerConnectionId>CONN_DSA</SqlServerConnectionId>
+  </DataTables>
+  <DataTables>
+    <DataTableId>DT_STG_ORDER_ITEMS</DataTableId>
+    <Name>stg_order_items</Name>
+    <SchemaName>dsa</SchemaName>
+    <SqlServerConnectionId>CONN_DSA</SqlServerConnectionId>
+  </DataTables>
+
+  <!-- Mark the ones that are views rather than plain tables -->
+  <Views>
+    <ViewId>DT_INT_ORDER_REVENUE</ViewId>
+  </Views>
+  <Views>
+    <ViewId>DT_STG_ORDERS</ViewId>
+  </Views>
+  <Views>
+    <ViewId>DT_STG_ORDER_ITEMS</ViewId>
+  </Views>
+
+  <!--
+    View SQL definitions, keyed by the view's own DataTableId (that's how
+    xml_to_nested_json looks these up - not a separate ViewDefinitionId).
+    stg_order_items is left without one on purpose, to exercise the
+    "view has no script" skip path in view_lineage.py.
+  -->
+  <ViewDefinitions>
+    <ViewDefinitionId>DT_STG_ORDERS</ViewDefinitionId>
+    <Script><![CDATA[CREATE VIEW [dsa].[stg_orders] AS
+SELECT
+    order_id,
+    customer_id,
+    order_date,
+    order_status
+FROM raw_orders]]></Script>
+  </ViewDefinitions>
+  <ViewDefinitions>
+    <ViewDefinitionId>DT_INT_ORDER_REVENUE</ViewDefinitionId>
+    <Script><![CDATA[CREATE VIEW [mdw].[int_order_revenue] AS
+SELECT
+    o.order_id,
+    o.order_date AS order_month,
+    SUM(i.quantity) AS gross_revenue
+FROM dsa.stg_orders o
+JOIN dsa.stg_order_items i ON o.order_id = i.order_id
+GROUP BY o.order_id, o.order_date]]></Script>
+  </ViewDefinitions>
+
+  <!-- Fields: dim_customers -->
+  <DataFields>
+    <DataFieldId>DF_CUST_ID</DataFieldId>
+    <DataTableId>DT_DIM_CUSTOMERS</DataTableId>
+    <Name>customer_id</Name>
+    <SqlDataType>int</SqlDataType>
+  </DataFields>
+  <DataFields>
+    <DataFieldId>DF_CUST_NAME</DataFieldId>
+    <DataTableId>DT_DIM_CUSTOMERS</DataTableId>
+    <Name>full_name</Name>
+    <SqlDataType>varchar(120)</SqlDataType>
+  </DataFields>
+  <DataFields>
+    <DataFieldId>DF_CUST_SEGMENT</DataFieldId>
+    <DataTableId>DT_DIM_CUSTOMERS</DataTableId>
+    <Name>segment</Name>
+    <SqlDataType>varchar(30)</SqlDataType>
+  </DataFields>
+  <DataFields>
+    <DataFieldId>DF_CUST_HASH</DataFieldId>
+    <DataTableId>DT_DIM_CUSTOMERS</DataTableId>
+    <Name>customer_hash</Name>
+    <SqlDataType>varbinary(20)</SqlDataType>
+  </DataFields>
+  <DataFields>
+    <DataFieldId>DF_CUST_DWID</DataFieldId>
+    <DataTableId>DT_DIM_CUSTOMERS</DataTableId>
+    <Name>dw_id</Name>
+    <SqlDataType>int</SqlDataType>
+  </DataFields>
+
+  <!-- Fields: fct_revenue -->
+  <DataFields>
+    <DataFieldId>DF_FCT_ORDER_ID</DataFieldId>
+    <DataTableId>DT_FCT_REVENUE</DataTableId>
+    <Name>order_id</Name>
+    <SqlDataType>int</SqlDataType>
+  </DataFields>
+  <DataFields>
+    <DataFieldId>DF_FCT_CUST_ID</DataFieldId>
+    <DataTableId>DT_FCT_REVENUE</DataTableId>
+    <Name>customer_id</Name>
+    <SqlDataType>int</SqlDataType>
+  </DataFields>
+  <DataFields>
+    <DataFieldId>DF_FCT_GROSS_REV</DataFieldId>
+    <DataTableId>DT_FCT_REVENUE</DataTableId>
+    <Name>gross_revenue</Name>
+    <SqlDataType>decimal(18,2)</SqlDataType>
+  </DataFields>
+  <DataFields>
+    <DataFieldId>DF_FCT_ORDER_MONTH</DataFieldId>
+    <DataTableId>DT_FCT_REVENUE</DataTableId>
+    <Name>order_month</Name>
+    <SqlDataType>date</SqlDataType>
+  </DataFields>
+
+  <!-- Fields: dim_products -->
+  <DataFields>
+    <DataFieldId>DF_PROD_ID</DataFieldId>
+    <DataTableId>DT_DIM_PRODUCTS</DataTableId>
+    <Name>product_id</Name>
+    <SqlDataType>int</SqlDataType>
+  </DataFields>
+  <DataFields>
+    <DataFieldId>DF_PROD_NAME</DataFieldId>
+    <DataTableId>DT_DIM_PRODUCTS</DataTableId>
+    <Name>product_name</Name>
+    <SqlDataType>varchar(120)</SqlDataType>
+  </DataFields>
+
+  <!-- Fields: int_returns -->
+  <DataFields>
+    <DataFieldId>DF_RET_ID</DataFieldId>
+    <DataTableId>DT_INT_RETURNS</DataTableId>
+    <Name>return_id</Name>
+    <SqlDataType>int</SqlDataType>
+  </DataFields>
+  <DataFields>
+    <DataFieldId>DF_RET_ORDER_ID</DataFieldId>
+    <DataTableId>DT_INT_RETURNS</DataTableId>
+    <Name>order_id</Name>
+    <SqlDataType>int</SqlDataType>
+  </DataFields>
+
+  <!-- Fields: int_order_revenue -->
+  <DataFields>
+    <DataFieldId>DF_IOR_ORDER_ID</DataFieldId>
+    <DataTableId>DT_INT_ORDER_REVENUE</DataTableId>
+    <Name>order_id</Name>
+    <SqlDataType>int</SqlDataType>
+  </DataFields>
+  <DataFields>
+    <DataFieldId>DF_IOR_ORDER_MONTH</DataFieldId>
+    <DataTableId>DT_INT_ORDER_REVENUE</DataTableId>
+    <Name>order_month</Name>
+    <SqlDataType>date</SqlDataType>
+  </DataFields>
+  <DataFields>
+    <DataFieldId>DF_IOR_GROSS_REV</DataFieldId>
+    <DataTableId>DT_INT_ORDER_REVENUE</DataTableId>
+    <Name>gross_revenue</Name>
+    <SqlDataType>decimal(18,2)</SqlDataType>
+  </DataFields>
+
+  <!-- Fields: stg_regions -->
+  <DataFields>
+    <DataFieldId>DF_REGION_CODE</DataFieldId>
+    <DataTableId>DT_STG_REGIONS</DataTableId>
+    <Name>region_code</Name>
+    <SqlDataType>varchar(10)</SqlDataType>
+  </DataFields>
+  <DataFields>
+    <DataFieldId>DF_REGION_NAME</DataFieldId>
+    <DataTableId>DT_STG_REGIONS</DataTableId>
+    <Name>region_name</Name>
+    <SqlDataType>varchar(60)</SqlDataType>
+  </DataFields>
+
+  <!-- Fields: stg_orders -->
+  <DataFields>
+    <DataFieldId>DF_STGORD_ORDER_ID</DataFieldId>
+    <DataTableId>DT_STG_ORDERS</DataTableId>
+    <Name>order_id</Name>
+    <SqlDataType>int</SqlDataType>
+  </DataFields>
+  <DataFields>
+    <DataFieldId>DF_STGORD_CUST_ID</DataFieldId>
+    <DataTableId>DT_STG_ORDERS</DataTableId>
+    <Name>customer_id</Name>
+    <SqlDataType>int</SqlDataType>
+  </DataFields>
+  <DataFields>
+    <DataFieldId>DF_STGORD_DATE</DataFieldId>
+    <DataTableId>DT_STG_ORDERS</DataTableId>
+    <Name>order_date</Name>
+    <SqlDataType>date</SqlDataType>
+  </DataFields>
+  <DataFields>
+    <DataFieldId>DF_STGORD_STATUS</DataFieldId>
+    <DataTableId>DT_STG_ORDERS</DataTableId>
+    <Name>order_status</Name>
+    <SqlDataType>varchar(20)</SqlDataType>
+  </DataFields>
+
+  <!-- Fields: stg_order_items -->
+  <DataFields>
+    <DataFieldId>DF_ITEM_ID</DataFieldId>
+    <DataTableId>DT_STG_ORDER_ITEMS</DataTableId>
+    <Name>order_item_id</Name>
+    <SqlDataType>int</SqlDataType>
+  </DataFields>
+  <DataFields>
+    <DataFieldId>DF_ITEM_ORDER_ID</DataFieldId>
+    <DataTableId>DT_STG_ORDER_ITEMS</DataTableId>
+    <Name>order_id</Name>
+    <SqlDataType>int</SqlDataType>
+  </DataFields>
+  <DataFields>
+    <DataFieldId>DF_ITEM_PRODUCT_ID</DataFieldId>
+    <DataTableId>DT_STG_ORDER_ITEMS</DataTableId>
+    <Name>product_id</Name>
+    <SqlDataType>int</SqlDataType>
+  </DataFields>
+  <DataFields>
+    <DataFieldId>DF_ITEM_QTY</DataFieldId>
+    <DataTableId>DT_STG_ORDER_ITEMS</DataTableId>
+    <Name>quantity</Name>
+    <SqlDataType>int</SqlDataType>
+  </DataFields>
+
+  <!--
+    Table-level lineage inputs (table_lineage.py), covering the confidently
+    ported categories: table insert mapping, related record, transformation,
+    custom hash field, and a known TX system field (dw_id, added above).
+  -->
+
+  <!-- Custom hash field: dim_customers.customer_hash <- full_name, segment -->
+  <CustomHashFieldItems>
+    <CustomHasFieldId>DF_CUST_HASH</CustomHasFieldId>
+    <DataFieldId>DF_CUST_NAME</DataFieldId>
+  </CustomHashFieldItems>
+  <CustomHashFieldItems>
+    <CustomHasFieldId>DF_CUST_HASH</CustomHasFieldId>
+    <DataFieldId>DF_CUST_SEGMENT</DataFieldId>
+  </CustomHashFieldItems>
+
+  <!-- Transformation: dim_products.product_name computed from product_id -->
+  <Transformations>
+    <TransformationId>TR1</TransformationId>
+    <DataFieldId>DF_PROD_NAME</DataFieldId>
+    <Expression>'SKU-' + CAST([product_id] AS VARCHAR)</Expression>
+  </Transformations>
+
+  <!-- Table insert (mapping-based, no script): int_returns.order_id <- stg_orders.order_id -->
+  <TableInserts>
+    <TableInsertId>TI1</TableInsertId>
+    <DestinationTableId>DT_INT_RETURNS</DestinationTableId>
+    <SourceTableId>DT_STG_ORDERS</SourceTableId>
+    <Name>Insert Returns From Orders</Name>
+  </TableInserts>
+  <TableInsertMappings>
+    <TableInsertMappingId>TIM1</TableInsertMappingId>
+    <TableInsertId>TI1</TableInsertId>
+    <DestinationFieldId>DF_RET_ORDER_ID</DestinationFieldId>
+    <SourceFieldId>DF_STGORD_ORDER_ID</SourceFieldId>
+  </TableInsertMappings>
+
+  <!-- Related record: dim_customers.segment <- stg_regions.region_name -->
+  <RelatedRecords>
+    <RelatedRecordId>RR1</RelatedRecordId>
+    <DataManTableId>DT_DIM_CUSTOMERS</DataManTableId>
+    <LookupTableId>DT_STG_REGIONS</LookupTableId>
+    <ExecutionNo>1</ExecutionNo>
+  </RelatedRecords>
+  <RelatedRecordMappingFields>
+    <RelatedRecordMappingFieldId>RRMF1</RelatedRecordMappingFieldId>
+    <RelatedRecordId>RR1</RelatedRecordId>
+    <DataFieldId>DF_CUST_SEGMENT</DataFieldId>
+    <MappedDataFieldId>DF_REGION_NAME</MappedDataFieldId>
+  </RelatedRecordMappingFields>
+
+  <!-- Semantic layer model (drives the MODEL dropdown) -->
+  <SemanticLayerModels>
+    <SemanticLayerModelId>SLM_REVENUE</SemanticLayerModelId>
+    <ProjectId>PRJ1</ProjectId>
+    <Name>Revenue Analytics</Name>
+  </SemanticLayerModels>
+
+  <SemanticLayerTables>
+    <SemanticLayerTableId>SLT_FCT_REVENUE</SemanticLayerTableId>
+    <SemanticLayerModelId>SLM_REVENUE</SemanticLayerModelId>
+    <TableId>DT_FCT_REVENUE</TableId>
+    <Name>fct_revenue</Name>
+  </SemanticLayerTables>
+
+  <SemanticLayerFields>
+    <SemanticLayerFieldId>SLF_GROSS_REV</SemanticLayerFieldId>
+    <SemanticLayerTableId>SLT_FCT_REVENUE</SemanticLayerTableId>
+    <FieldId>DF_FCT_GROSS_REV</FieldId>
+    <Name>gross_revenue</Name>
+  </SemanticLayerFields>
+  <SemanticLayerFields>
+    <SemanticLayerFieldId>SLF_ORDER_MONTH</SemanticLayerFieldId>
+    <SemanticLayerTableId>SLT_FCT_REVENUE</SemanticLayerTableId>
+    <FieldId>DF_FCT_ORDER_MONTH</FieldId>
+    <Name>order_month</Name>
+  </SemanticLayerFields>
+
+</TimeXtenderProject>
