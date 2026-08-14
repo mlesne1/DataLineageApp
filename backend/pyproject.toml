@@ -5,6 +5,7 @@ description = "Backend API for Data Lineage analysis"
 dependencies = [
   "fastapi>=0.110.0",
   "uvicorn[standard]>=0.23.0",
+  "python-multipart>=0.0.9",
   "sqlglot>=17.0.0",
   "networkx>=3.0",
   "pyvis>=0.3.2",
@@ -14,3 +15,6 @@ dependencies = [
 
 [project.scripts]
 serve = "backend.main:run"
+
+[tool.setuptools.packages.find]
+include = ["backend*"]

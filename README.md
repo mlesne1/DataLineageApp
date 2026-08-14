@@ -12,7 +12,6 @@ A browser-based data lineage solution with a React frontend and Python backend.
 - On demand (not part of project creation), find every field downstream of
   a given field, for a "click a field, toggle on what it feeds into" UI
   interaction
-- Keep existing legacy script files intact where practical
 
 ## Structure
 
@@ -23,45 +22,46 @@ A browser-based data lineage solution with a React frontend and Python backend.
   - `backend/backend/sql_generate_schema.py` — builds the
     `{schema: {table: {column: type}}}` schema sqlglot needs to qualify
     columns, read directly off the nested JSON (tables carry their own
-    `SchemaName`; no `"schema.table"` string-splitting like the old
-    workspace-root version needed)
+    `SchemaName`)
   - `backend/backend/sql_col_lineage.py` — the column-level T-SQL lineage
-    analyzer (moved from the workspace root as-is; format-agnostic)
+    analyzer (format-agnostic)
   - `backend/backend/view_lineage.py` — runs `sql_col_lineage.Lineage` over
-    every view's SQL script, using the generated schema; the new-JSON
-    equivalent of the workspace-root `Step3_compute_views_col_lineage.py`;
-    runs automatically on project creation, right after the XML → JSON step
+    every view's SQL script, using the generated schema; runs automatically
+    on project creation, right after the XML → JSON step
   - `backend/backend/table_lineage.py` — lineage for tables (not views):
     table inserts, related records, transformations, conditional lookup
-    fields, custom hash fields, known TX system fields; the new-JSON
-    equivalent of the workspace-root `Step4_compute_tables_col_lineage.py`.
-    The old script needed a separately built "tree structure" file to look
-    up things like a table insert's source table name, because its JSON
-    didn't carry that directly. The nested JSON already resolves and
-    attaches that (`SourceTableName`, `LookupTableName`, `DataFieldName`,
-    ...), so no tree lookup is needed - the lineage logic itself (which
-    category contributes what) is unchanged. Runs automatically on project
-    creation, right after view lineage.
+    fields, custom hash fields, known TX system fields. Runs automatically
+    on project creation, right after view lineage.
   - `backend/backend/downstream_lineage.py` — given a field, finds every
     field downstream of it (whose lineage traces back to include it),
-    walking `ColumnLineage` edges built by the two steps above. Extracts
-    just the graph-walk mechanism from the workspace-root
-    `Step5_3_draw_graph_from_excel_failedlineagehandled.py`, **direction
-    inverted** (Step5_3 walks upstream - field to its sources; this walks
-    downstream - field to its consumers, which is what a click-to-toggle UI
-    interaction needs) and with the pyvis/Excel/semantic-model-seeding
-    parts left behind as not relevant to an interactive lookup. Not wired
+    walking `ColumnLineage` edges built by the two steps above. Not wired
     to an API endpoint yet - call it directly, on demand, when a field is
     clicked; it's intentionally not run at project-creation time.
 - `frontend/` — React SPA
-- remaining legacy scripts (`Step3_compute_views_col_lineage.py`,
-  `Step4_compute_tables_col_lineage.py`,
-  `Step5_3_draw_graph_from_excel_failedlineagehandled.py`,
-  `sql_generate_schema.py`) stay at the workspace root, built for an older
-  JSON contract. **`Step3_compute_views_col_lineage.py` no longer runs
-  standalone** - it imports `sql_col_lineage`, which now lives in
-  `backend/backend/` only. `Step4_compute_tables_col_lineage.py` was already
-  non-runnable beforehand (missing `sqlalchemy`).
+
+## Getting started (after cloning)
+
+Prerequisites: [Git](https://git-scm.com/), [Node.js](https://nodejs.org/) 18+
+(with npm), and Python 3.10+.
+
+```powershell
+git clone https://github.com/mlesne1/DataLineageApp.git
+cd DataLineageApp
+
+# Backend: install the package + its dependencies (fastapi, uvicorn, sqlglot,
+# networkx, pyvis, openpyxl, python-docx). A virtual environment is optional
+# but recommended.
+cd backend
+python -m pip install -e .
+cd ..
+
+# Frontend: install node_modules (not committed to the repo)
+cd frontend
+npm install
+```
+
+No `.env` file or API keys are required — the backend has no external
+service dependencies.
 
 ## Running locally
 
@@ -69,18 +69,26 @@ Run both servers together from `frontend/`:
 
 ```powershell
 cd frontend
-npm install
 npm start
 ```
 
 This starts the React dev server and the FastAPI backend side by side
-(labeled `[WEB]`/`[API]`). To run the backend on its own:
+(labeled `[WEB]`/`[API]`), reusing the `python` on your PATH — make sure
+that's the environment where you ran `pip install -e .`. The app opens at
+http://localhost:3000 and calls the API at http://127.0.0.1:8000. To run the
+backend on its own:
 
 ```powershell
 cd backend
-python -m pip install -e .
 python -m uvicorn backend.main:app --reload
 ```
+
+`sample_timextender_project.xml` (repo root) can be uploaded as a first
+project once the app is running, to confirm everything works end to end.
+
+Project data created through the app (`backend/projects/`) and build output
+(`frontend/node_modules/`, `frontend/build/`) are gitignored — they're
+generated locally and never need to be committed.
 
 ## Notes
 
