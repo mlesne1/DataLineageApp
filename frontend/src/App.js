@@ -25,6 +25,10 @@ function App() {
   const [selectedFields, setSelectedFields] = useState(new Set());
   const [selectedModel, setSelectedModel] = useState(null);
   const [edges, setEdges] = useState([]);
+  // What to redo when the upstream/downstream toggle changes - the last
+  // table/field actually clicked, so flipping direction re-runs lineage
+  // for it instead of leaving whatever was already on the board untouched.
+  const [lastSeed, setLastSeed] = useState(null);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [warnings] = useState([]);
 
@@ -60,6 +64,7 @@ function App() {
     setSelectedFields(new Set());
     setSelectedModel(null);
     setEdges([]);
+    setLastSeed(null);
   };
 
   const loadProjectData = async (projectName) => {
@@ -119,10 +124,10 @@ function App() {
     }
   };
 
-  const fetchLineage = async (tableId, column, nodeId) => {
+  const fetchLineage = async (tableId, column, nodeId, direction = lineageDirection) => {
     if (!createdProject) return;
     try {
-      const params = new URLSearchParams({ direction: lineageDirection });
+      const params = new URLSearchParams({ direction });
       if (column) params.set('column', column);
       const response = await fetch(
         `${API_BASE}/projects/${encodeURIComponent(createdProject)}/lineage/${encodeURIComponent(tableId)}?${params}`
@@ -145,7 +150,10 @@ function App() {
     // A semantic-layer table's own id stays distinct (so it renders as its
     // own node), but lineage has to be looked up against the physical
     // table it's built from.
-    if (isSelecting) fetchLineage(physicalTableId || tableId, undefined, tableId);
+    if (isSelecting) {
+      setLastSeed({ nodeId: tableId, physicalTableId, fieldName: null, column: null });
+      fetchLineage(physicalTableId || tableId, undefined, tableId);
+    }
   };
 
   const handleToggleField = (tableId, fieldName, sourceColumn, physicalTableId) => {
@@ -158,13 +166,32 @@ function App() {
       else next.add(key);
       return next;
     });
-    if (isSelecting) fetchLineage(physicalTableId || tableId, sourceColumn || fieldName, tableId);
+    if (isSelecting) {
+      setLastSeed({ nodeId: tableId, physicalTableId, fieldName, column: sourceColumn || fieldName });
+      fetchLineage(physicalTableId || tableId, sourceColumn || fieldName, tableId);
+    }
   };
 
   const handleClearWhiteboard = () => {
     setSelectedTables(new Set());
     setSelectedFields(new Set());
     setEdges([]);
+    setLastSeed(null);
+  };
+
+  // Flipping the direction toggle only changes future clicks by default -
+  // it wouldn't otherwise touch whatever's already on the board. Re-running
+  // lineage for the last-clicked table/field is what makes the toggle
+  // actually show the other direction for what you're currently looking at.
+  const handleDirectionChange = (direction) => {
+    setLineageDirection(direction);
+    if (!lastSeed) return;
+
+    const { nodeId, physicalTableId, fieldName, column } = lastSeed;
+    setSelectedTables(new Set(fieldName ? [] : [nodeId]));
+    setSelectedFields(new Set(fieldName ? [`${nodeId}::${fieldName}`] : []));
+    setEdges([]);
+    fetchLineage(physicalTableId || nodeId, column, nodeId, direction);
   };
 
   const handleCreateProject = async (name, xmlFile) => {
@@ -249,7 +276,7 @@ function App() {
           viewMode={viewMode}
           setViewMode={setViewMode}
           lineageDirection={lineageDirection}
-          setLineageDirection={setLineageDirection}
+          onDirectionChange={handleDirectionChange}
           selectedTables={selectedTables}
           selectedFields={selectedFields}
           onClear={handleClearWhiteboard}

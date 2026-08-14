@@ -220,33 +220,3 @@ def get_lineage(structure: dict, table_id: str, direction: str, column: str | No
         seed_keys = {key for key in index if key.startswith(start_prefix)}
 
     return _walk(get_neighbors, name_to_id, seed_keys, exclude_table_id=table_id, direction=direction)
-
-
-def get_downstream_fields(structure: dict, table: str, column: str) -> list[dict]:
-    """Full transitive set of fields downstream of `table.column` (`table`
-    is the plain table/view name, matching the ColumnLineage source keys -
-    not a DataTableId and not warehouse-qualified).
-
-    Returns a flat, deduplicated list of {"table", "table_path", "column"}
-    - every field whose lineage traces back through zero or more hops to
-    this one - in breadth-first (nearest-first) order, so the UI can toggle
-    them all on directly without needing to walk the graph itself.
-    """
-    index = build_downstream_index(structure)
-
-    start_key = _normalize(f"{table}.{column}")
-    visited = {start_key}
-    result: list[dict] = []
-    queue = [start_key]
-
-    while queue:
-        key = queue.pop(0)
-        for consumer in index.get(key, []):
-            consumer_key = _normalize(f"{consumer['table']}.{consumer['column']}")
-            if consumer_key in visited:
-                continue
-            visited.add(consumer_key)
-            result.append(consumer)
-            queue.append(consumer_key)
-
-    return result

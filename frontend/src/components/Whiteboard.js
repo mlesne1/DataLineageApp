@@ -66,7 +66,7 @@ export default function Whiteboard({
   viewMode,
   setViewMode,
   lineageDirection,
-  setLineageDirection,
+  onDirectionChange,
   selectedTables,
   selectedFields,
   onClear,
@@ -186,13 +186,13 @@ export default function Whiteboard({
         <div className="view-toggle">
           <button
             className={lineageDirection === 'downstream' ? 'active' : ''}
-            onClick={() => setLineageDirection('downstream')}
+            onClick={() => onDirectionChange('downstream')}
           >
             DOWNSTREAM
           </button>
           <button
             className={lineageDirection === 'upstream' ? 'active' : ''}
-            onClick={() => setLineageDirection('upstream')}
+            onClick={() => onDirectionChange('upstream')}
           >
             UPSTREAM
           </button>
