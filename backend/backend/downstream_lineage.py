@@ -187,9 +187,13 @@ def _walk(
         key_table_id = resolved_id if resolved_id is not None else key_table
 
         if resolved_id is None:
+            print(f"[lineage] dead end at {key!r}: {key_table!r} doesn't resolve to a known, unambiguous table", flush=True)
             continue
 
-        for neighbor in get_neighbors(key):
+        neighbors = get_neighbors(key)
+        print(f"[lineage] {key!r} ({key_table_id}) -> {len(neighbors)} neighbor(s): {neighbors}", flush=True)
+
+        for neighbor in neighbors:
             neighbor_table_id = name_to_id.get(_normalize(neighbor["table"]), neighbor["table"])
             neighbor_key = _normalize(f"{neighbor['table']}.{neighbor['column']}")
 
@@ -226,15 +230,24 @@ def get_lineage(structure: dict, table_id: str, direction: str, column: str | No
     id is the physical DataTableId it's built from, so this only ever walks
     real ColumnLineage data.
     """
+    print(f"[lineage] get_lineage(table_id={table_id!r}, direction={direction!r}, column={column!r})", flush=True)
+
     name_to_id, id_to_name = _table_id_and_name_maps(structure)
     start_name = id_to_name.get(table_id)
+    print(f"[lineage] id_to_name[{table_id!r}] = {start_name!r}", flush=True)
     if start_name is None:
+        print(f"[lineage] {table_id!r} isn't a known DataTableId - nothing to walk", flush=True)
         return {"tables": [], "edges": [], "fields": []}
 
     # If another table also has this name, bare "table.column" references
     # elsewhere can't be trusted to mean *this* table specifically (see
     # `_table_id_and_name_maps`) - so there's nothing safe to seed from.
     if name_to_id.get(_normalize(start_name)) != table_id:
+        print(
+            f"[lineage] {start_name!r} is ambiguous (shared with another table) - "
+            f"name_to_id says {name_to_id.get(_normalize(start_name))!r}, refusing to seed",
+            flush=True,
+        )
         return {"tables": [], "edges": [], "fields": []}
 
     if direction == "downstream":
@@ -254,4 +267,12 @@ def get_lineage(structure: dict, table_id: str, direction: str, column: str | No
         start_prefix = _normalize(start_name) + "."
         seed_keys = {key for key in index if key.startswith(start_prefix)}
 
-    return _walk(get_neighbors, name_to_id, seed_keys, exclude_table_id=table_id, direction=direction)
+    print(f"[lineage] seed_keys = {sorted(seed_keys)}", flush=True)
+
+    result = _walk(get_neighbors, name_to_id, seed_keys, exclude_table_id=table_id, direction=direction)
+    print(
+        f"[lineage] result: {len(result['tables'])} table(s), {len(result['edges'])} edge(s), "
+        f"{len(result['fields'])} field(s) -> {result}",
+        flush=True,
+    )
+    return result
