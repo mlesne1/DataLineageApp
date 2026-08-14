@@ -1,10 +1,11 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import TopBar from './components/TopBar';
 import LeftPanel from './components/LeftPanel';
 import Whiteboard from './components/Whiteboard';
 import PbipPanel from './components/PbipPanel';
 import NewProjectModal from './components/NewProjectModal';
 import { transformProjectData } from './lib/transformProjectData';
+import { colorForLayer } from './lib/projectTree';
 
 const API_BASE = 'http://127.0.0.1:8000';
 
@@ -28,6 +29,31 @@ function App() {
   const [warnings] = useState([]);
 
   const { layers, sources, semanticModels } = useMemo(() => transformProjectData(projectData), [projectData]);
+
+  const displayLayers = useMemo(() => {
+    if (!selectedModel || !selectedModel.tables.length) return layers;
+    return [
+      ...layers,
+      {
+        key: `semantic-model-${selectedModel.id}`,
+        label: `Semantic Layer — ${selectedModel.name}`,
+        color: colorForLayer('Semantic Layer', layers.length),
+        groups: [{ type: 'TABLES', items: selectedModel.tables }],
+      },
+    ];
+  }, [layers, selectedModel]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const response = await fetch(`${API_BASE}/projects`);
+        if (!response.ok) return;
+        setExistingProjects(await response.json());
+      } catch (err) {
+        // backend not reachable yet - leave the list empty
+      }
+    })();
+  }, []);
 
   const resetWhiteboard = () => {
     setSelectedTables(new Set());
@@ -139,7 +165,7 @@ function App() {
       <main className={`workspace${rightPanelOpen ? ' with-right-panel' : ''}`}>
         <LeftPanel
           hasProject={Boolean(createdProject)}
-          layers={layers}
+          layers={displayLayers}
           sources={sources}
           viewMode={viewMode}
           selectedTables={selectedTables}
@@ -149,7 +175,7 @@ function App() {
         />
 
         <Whiteboard
-          layers={layers}
+          layers={displayLayers}
           edges={NO_EDGES}
           defaultPositions={NO_DEFAULT_POSITIONS}
           viewMode={viewMode}

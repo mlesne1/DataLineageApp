@@ -29,6 +29,11 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/projects")
+def list_projects():
+    return sorted(p.name for p in PROJECTS_DIR.iterdir() if p.is_dir())
+
+
 @app.post("/projects")
 async def create_project(name: str = Form(...), xml_file: UploadFile = File(...)):
     project_dir = PROJECTS_DIR / name

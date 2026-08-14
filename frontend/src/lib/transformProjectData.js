@@ -57,17 +57,34 @@ function buildSources(sourcesObj) {
   }));
 }
 
+function semanticFieldsFromRaw(rawFields) {
+  return Object.entries(rawFields || {}).map(([fieldName, fieldObj]) => ({
+    name: fieldObj.Name || fieldName,
+    type: String(fieldObj.SqlDataType || fieldObj.DataType || 'UNKNOWN').toUpperCase(),
+    source: fieldObj.FieldName || fieldObj.Name || fieldName,
+  }));
+}
+
+function semanticTablesFromRaw(slTables) {
+  return Object.entries(slTables || {}).map(([tableKey, tableObj]) => {
+    const fields = semanticFieldsFromRaw(tableObj.SemanticLayerFields);
+    return {
+      id: tableObj.SemanticLayerTableId || tableKey,
+      name: tableObj.Name || tableObj.TableName || tableKey,
+      fieldCount: fields.length,
+      fields,
+    };
+  });
+}
+
 function buildSemanticModels(modelsObj) {
   return Object.entries(modelsObj || {}).map(([modelName, modelObj]) => {
-    const slTables = modelObj.SemanticLayerTables || {};
-    const tableNames = Object.values(slTables)
-      .map((table) => table.TableName || table.Name)
-      .filter(Boolean);
+    const tables = semanticTablesFromRaw(modelObj.SemanticLayerTables);
     return {
       id: modelObj.SemanticLayerModelId || modelName,
       name: modelName,
-      description: tableNames.length ? `Tables: ${tableNames.join(', ')}` : 'No tables mapped yet',
-      tables: tableNames,
+      description: tables.length ? `${tables.length} table${tables.length === 1 ? '' : 's'}` : 'No tables mapped yet',
+      tables,
     };
   });
 }
