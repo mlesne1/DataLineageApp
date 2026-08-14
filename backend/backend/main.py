@@ -6,7 +6,7 @@ import json
 import shutil
 import xml.etree.ElementTree as ET
 
-from .downstream_lineage import get_lineage
+from .downstreamlineagenew import get_lineage
 from .sql_generate_schema import generate_schema
 from .table_lineage import compute_table_lineage
 from .view_lineage import compute_view_lineage

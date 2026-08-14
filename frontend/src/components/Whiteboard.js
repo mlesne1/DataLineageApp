@@ -4,13 +4,48 @@ import { ClearIcon } from '../icons';
 
 const NODE_WIDTH = 220;
 const FALLBACK_COLS = 3;
+const FALLBACK_BASE_X = 80;
+const FALLBACK_BASE_Y = 460;
 const FALLBACK_GAP_X = 260;
 const FALLBACK_GAP_Y = 140;
 
 function fallbackPosition(index) {
   const col = index % FALLBACK_COLS;
   const row = Math.floor(index / FALLBACK_COLS);
-  return { x: 80 + col * FALLBACK_GAP_X, y: 460 + row * FALLBACK_GAP_Y };
+  return { x: FALLBACK_BASE_X + col * FALLBACK_GAP_X, y: FALLBACK_BASE_Y + row * FALLBACK_GAP_Y };
+}
+
+// edges are always {from: upstream, to: downstream} (the true data-flow
+// direction) no matter which direction was walked to find them - see
+// edgeAnchor below, which always anchors an edge's right side to `from`
+// and its left side to `to`. That only draws a clean connector (instead
+// of one looping behind both boxes) when upstream nodes actually sit to
+// the left of the downstream nodes they feed, so new nodes are ranked by
+// longest hop count from a root along from->to edges: upstream/root
+// nodes get column 0, and every hop downstream moves a column to the
+// right - regardless of whether the user clicked the upstream or the
+// downstream end first.
+function computeColumns(nodeIds, edges) {
+  const nodeIdSet = new Set(nodeIds);
+  const incoming = {};
+  nodeIds.forEach((id) => { incoming[id] = []; });
+  edges.forEach(({ from, to }) => {
+    if (nodeIdSet.has(from) && nodeIdSet.has(to)) incoming[to].push(from);
+  });
+
+  const column = {};
+  const resolving = new Set();
+  const columnOf = (id) => {
+    if (column[id] !== undefined) return column[id];
+    if (resolving.has(id)) return 0; // cycle guard
+    resolving.add(id);
+    const preds = incoming[id] || [];
+    column[id] = preds.length ? Math.max(...preds.map(columnOf)) + 1 : 0;
+    resolving.delete(id);
+    return column[id];
+  };
+  nodeIds.forEach(columnOf);
+  return column;
 }
 
 function edgeAnchor(pos, side) {
@@ -74,6 +109,9 @@ export default function Whiteboard({
   const containerRef = useRef(null);
   const dragRef = useRef(null);
   const panRef = useRef(null);
+  // Nodes the user has manually dragged - the column layout below skips
+  // these on every recompute so it never fights a manual placement.
+  const draggedIdsRef = useRef(new Set());
   const [positions, setPositions] = useState(defaultPositions);
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
   const [inspect, setInspect] = useState(null);
@@ -85,19 +123,33 @@ export default function Whiteboard({
     return Array.from(ids);
   }, [viewMode, selectedTables, selectedFields]);
 
+  // Recomputed (not just filled in) on every change: a node revealed early
+  // - e.g. the clicked seed - can end up several hops closer to column 0
+  // than it truly belongs once a deeper upstream/downstream chain past it
+  // is discovered, so its column has to be free to shift, not just get
+  // set once. Row is a stable position-within-column, ordered the same
+  // way as nodeIds (append-only), so already-placed nodes don't jitter.
   useEffect(() => {
     setPositions((prev) => {
-      let changed = false;
+      const columns = computeColumns(nodeIds, edges);
+      const rowByColumn = {};
       const next = { ...prev };
-      nodeIds.forEach((id, idx) => {
-        if (!next[id]) {
-          next[id] = fallbackPosition(idx);
+      let changed = false;
+      nodeIds.forEach((id) => {
+        if (draggedIdsRef.current.has(id)) return;
+        const col = columns[id];
+        const row = rowByColumn[col] || 0;
+        rowByColumn[col] = row + 1;
+        const x = FALLBACK_BASE_X + col * FALLBACK_GAP_X;
+        const y = FALLBACK_BASE_Y + row * FALLBACK_GAP_Y;
+        if (!prev[id] || prev[id].x !== x || prev[id].y !== y) {
+          next[id] = { x, y };
           changed = true;
         }
       });
       return changed ? next : prev;
     });
-  }, [nodeIds]);
+  }, [nodeIds, edges]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -113,6 +165,7 @@ export default function Whiteboard({
 
   const handleNodeDragStart = (e, tableId) => {
     e.preventDefault();
+    draggedIdsRef.current.add(tableId);
     dragRef.current = {
       tableId,
       startX: e.clientX,
@@ -252,7 +305,7 @@ export default function Whiteboard({
         </div>
       )}
 
-      <button className="clear-whiteboard" onClick={onClear}>
+      <button className="clear-whiteboard" onClick={() => { draggedIdsRef.current.clear(); onClear(); }}>
         <ClearIcon />
         Clear whiteboard
       </button>

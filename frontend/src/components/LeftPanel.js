@@ -52,7 +52,7 @@ function FieldSubRows({ item, color, selectedFields, onToggleField }) {
 }
 
 function LayerGroup({ layer, viewMode, searchTerm, selectedTables, selectedFields, onToggleTable, onToggleField }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const [groupOpen, setGroupOpen] = useState(() => Object.fromEntries(layer.groups.map((g) => [g.type, true])));
   const [expandedTable, setExpandedTable] = useState(null);
 
