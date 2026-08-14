@@ -34,7 +34,11 @@ function FieldSubRows({ item, color, selectedFields, onToggleField }) {
         const key = `${item.id}::${field.name}`;
         const checked = selectedFields.has(key);
         return (
-          <button key={key} className="tree-row field-row" onClick={() => onToggleField(item.id, field.name, field.source)}>
+          <button
+            key={key}
+            className="tree-row field-row"
+            onClick={() => onToggleField(item.id, field.name, field.source, item.physicalTableId)}
+          >
             <Checkbox checked={checked} />
             <span className="tree-row-name" style={{ color }}>
               {field.name}
@@ -93,7 +97,7 @@ function LayerGroup({ layer, viewMode, searchTerm, selectedTables, selectedField
                           item={item}
                           color={layer.color}
                           checked={selectedTables.has(item.id)}
-                          onToggle={() => onToggleTable(item.id)}
+                          onToggle={() => onToggleTable(item.id, item.physicalTableId)}
                         />
                       ) : (
                         <>

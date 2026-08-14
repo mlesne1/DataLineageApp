@@ -88,29 +88,38 @@ function App() {
     return merged;
   };
 
-  const applyLineage = (data) => {
+  // The backend only ever knows about physical DataTableIds. When the
+  // clicked node is a semantic-layer table, `requestedId` (what was sent to
+  // the backend) differs from `nodeId` (the semantic node already on the
+  // board) - remapping the physical id back to the node id here is what
+  // makes the returned edges/fields connect to the semantic node visually,
+  // instead of pointing at a physical node that was never added.
+  const applyLineage = (data, requestedId, nodeId) => {
+    const remapId = (id) => (id === requestedId ? nodeId : id);
+
     if (data.tables && data.tables.length) {
       setSelectedTables((prev) => {
         const next = new Set(prev);
-        data.tables.forEach((id) => next.add(id));
+        data.tables.forEach((id) => next.add(remapId(id)));
         return next;
       });
     }
 
     if (data.edges && data.edges.length) {
-      setEdges((prev) => mergeEdges(prev, data.edges));
+      const remapped = data.edges.map((edge) => ({ from: remapId(edge.from), to: remapId(edge.to) }));
+      setEdges((prev) => mergeEdges(prev, remapped));
     }
 
     if (data.fields && data.fields.length) {
       setSelectedFields((prev) => {
         const next = new Set(prev);
-        data.fields.forEach((f) => next.add(`${f.table_id}::${f.column}`));
+        data.fields.forEach((f) => next.add(`${remapId(f.table_id)}::${f.column}`));
         return next;
       });
     }
   };
 
-  const fetchLineage = async (tableId, column) => {
+  const fetchLineage = async (tableId, column, nodeId) => {
     if (!createdProject) return;
     try {
       const params = new URLSearchParams({ direction: lineageDirection });
@@ -119,13 +128,13 @@ function App() {
         `${API_BASE}/projects/${encodeURIComponent(createdProject)}/lineage/${encodeURIComponent(tableId)}?${params}`
       );
       if (!response.ok) return;
-      applyLineage(await response.json());
+      applyLineage(await response.json(), tableId, nodeId || tableId);
     } catch (err) {
       // backend not reachable - the click still registers, just without the drilldown
     }
   };
 
-  const handleToggleTable = (tableId) => {
+  const handleToggleTable = (tableId, physicalTableId) => {
     const isSelecting = !selectedTables.has(tableId);
     setSelectedTables((prev) => {
       const next = new Set(prev);
@@ -133,10 +142,13 @@ function App() {
       else next.add(tableId);
       return next;
     });
-    if (isSelecting) fetchLineage(tableId);
+    // A semantic-layer table's own id stays distinct (so it renders as its
+    // own node), but lineage has to be looked up against the physical
+    // table it's built from.
+    if (isSelecting) fetchLineage(physicalTableId || tableId, undefined, tableId);
   };
 
-  const handleToggleField = (tableId, fieldName, sourceColumn) => {
+  const handleToggleField = (tableId, fieldName, sourceColumn, physicalTableId) => {
     setViewMode('field');
     const key = `${tableId}::${fieldName}`;
     const isSelecting = !selectedFields.has(key);
@@ -146,7 +158,7 @@ function App() {
       else next.add(key);
       return next;
     });
-    if (isSelecting) fetchLineage(tableId, sourceColumn || fieldName);
+    if (isSelecting) fetchLineage(physicalTableId || tableId, sourceColumn || fieldName, tableId);
   };
 
   const handleClearWhiteboard = () => {

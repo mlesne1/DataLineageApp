@@ -69,11 +69,14 @@ function semanticTablesFromRaw(slTables) {
   return Object.entries(slTables || {}).map(([tableKey, tableObj]) => {
     const fields = semanticFieldsFromRaw(tableObj.SemanticLayerFields);
     return {
-      // TableId is the physical DataTableId this semantic table is built
-      // from - using it as the node id (instead of SemanticLayerTableId)
-      // means clicking it plugs straight into the same lineage/drilldown
-      // data as the physical table, with no separate lookup needed.
-      id: tableObj.TableId || tableObj.SemanticLayerTableId || tableKey,
+      // Prefixed and kept distinct from any physical DataTableId, so this
+      // renders as its own node on the whiteboard (semantic name, semantic
+      // fields, Semantic Layer color) instead of getting silently resolved
+      // to the physical table it's built from.
+      id: `semantic:${tableObj.SemanticLayerTableId || tableKey}`,
+      // TableId is that physical DataTableId - kept separately so a click
+      // can still look up real lineage for the table it's built from.
+      physicalTableId: tableObj.TableId || null,
       name: tableObj.Name || tableObj.TableName || tableKey,
       fieldCount: fields.length,
       fields,
